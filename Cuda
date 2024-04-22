@@ -1,0 +1,100 @@
+%%writefile parallel_cuda.cu
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <chrono>
+
+// CUDA kernel to add polar vectors
+__global__ void add_polar_vectors_kernel(const double* magnitudes_a, const double* angles_a,
+                                         const double* magnitudes_b, const double* angles_b,
+                                         double* result_magnitudes, double* result_angles, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        // Convert polar vectors to Cartesian vectors
+        double x1 = magnitudes_a[idx] * cos(angles_a[idx] * M_PI / 180.0);
+        double y1 = magnitudes_a[idx] * sin(angles_a[idx] * M_PI / 180.0);
+        double x2 = magnitudes_b[idx] * cos(angles_b[idx] * M_PI / 180.0);
+        double y2 = magnitudes_b[idx] * sin(angles_b[idx] * M_PI / 180.0);
+
+        // Perform vector addition
+        double x_sum = x1 + x2;
+        double y_sum = y1 + y2;
+
+        // Convert the resultant vectors back to polar coordinates
+        result_magnitudes[idx] = sqrt(x_sum * x_sum + y_sum * y_sum);
+        result_angles[idx] = atan2(y_sum, x_sum) * 180.0 / M_PI;
+    }
+}
+
+int main() {
+    // Example polar vectors for 1000 pairs
+    const int n = 1000;
+    std::vector<double> magnitudes_a(n);
+    std::vector<double> angles_a(n);
+    std::vector<double> magnitudes_b(n);
+    std::vector<double> angles_b(n);
+
+    // Generate random vectors
+    for (int i = 0; i < n; ++i) {
+        magnitudes_a[i] = (rand() % 10) + 1;  // Random magnitudes for vector A
+        angles_a[i] = (rand() % 360);         // Random angles for vector A
+        magnitudes_b[i] = (rand() % 10) + 1;  // Random magnitudes for vector B
+        angles_b[i] = (rand() % 360);         // Random angles for vector B
+    }
+
+    // Device arrays
+    double *d_magnitudes_a, *d_angles_a, *d_magnitudes_b, *d_angles_b, *d_result_magnitudes, *d_result_angles;
+    cudaMalloc(&d_magnitudes_a, n * sizeof(double));
+    cudaMalloc(&d_angles_a, n * sizeof(double));
+    cudaMalloc(&d_magnitudes_b, n * sizeof(double));
+    cudaMalloc(&d_angles_b, n * sizeof(double));
+    cudaMalloc(&d_result_magnitudes, n * sizeof(double));
+    cudaMalloc(&d_result_angles, n * sizeof(double));
+
+    // Copy data from host to device
+    cudaMemcpy(d_magnitudes_a, magnitudes_a.data(), n * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_angles_a, angles_a.data(), n * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_magnitudes_b, magnitudes_b.data(), n * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_angles_b, angles_b.data(), n * sizeof(double), cudaMemcpyHostToDevice);
+
+    // Calculate block and grid dimensions
+    int blockSize = 256;
+    int numBlocks = (n + blockSize - 1) / blockSize;
+
+    // Measure time for vector addition
+    auto start_time = std::chrono::steady_clock::now();
+
+    // Call CUDA kernel
+    add_polar_vectors_kernel<<<numBlocks, blockSize>>>(d_magnitudes_a, d_angles_a, d_magnitudes_b, d_angles_b, d_result_magnitudes, d_result_angles, n);
+
+    // Measure time taken
+    auto end_time = std::chrono::steady_clock::now();
+    double time_taken = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count() / 1e6;
+
+    // Copy result from device to host
+    std::vector<double> result_magnitudes(n);
+    std::vector<double> result_angles(n);
+    cudaMemcpy(result_magnitudes.data(), d_result_magnitudes, n * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(result_angles.data(), d_result_angles, n * sizeof(double), cudaMemcpyDeviceToHost);
+
+    // Print the time taken
+    std::cout << "Time taken for adding 1000 pairs of vectors in parallel: " << time_taken << " seconds" << std::endl;
+
+    // Print the results
+    for (int i = 0; i < n; ++i) {
+        std::cout << "Pair " << i+1 << ":" << std::endl;
+        std::cout << "Vector A: Magnitude=" << magnitudes_a[i] << ", Angle=" << angles_a[i] << " degrees" << std::endl;
+        std::cout << "Vector B: Magnitude=" << magnitudes_b[i] << ", Angle=" << angles_b[i] << " degrees" << std::endl;
+        std::cout << "Resultant Vector: Magnitude=" << result_magnitudes[i] << ", Angle=" << result_angles[i] << " degrees" << std::endl << std::endl;
+    }
+
+    // Free device memory
+    cudaFree(d_magnitudes_a);
+    cudaFree(d_angles_a);
+    cudaFree(d_magnitudes_b);
+    cudaFree(d_angles_b);
+    cudaFree(d_result_magnitudes);
+    cudaFree(d_result_angles);
+
+    return 0;
+}
